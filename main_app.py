@@ -1,10 +1,12 @@
-
 """
-Dashboard COVID-19 (datos sintéticos) - Streamlit + Plotly
------------------------------------------------------------
-Genera datos sintéticos dentro de la propia app (10,000 registros / 8 columnas),
-calcula métricas cuantitativas y cualitativas, y permite construir gráficas
-dinámicas eligiendo variables, umbrales y opciones de personalización.
+Dashboard de Accidentes de Tránsito - Medellín (datos sintéticos)
+------------------------------------------------------------------
+EAFIT 2026 - Ciencia de Datos - Profesor Jose Padilla - Julio 2026
+
+Genera datos sintéticos dentro de la propia app (500 registros / 10 columnas,
+incluyendo una serie de tiempo), calcula métricas cuantitativas y cualitativas,
+y permite construir gráficas dinámicas eligiendo variables, umbrales y
+personalización. Acceso protegido con código.
 """
 
 import numpy as np
@@ -18,78 +20,119 @@ from datetime import datetime, timedelta
 # CONFIGURACIÓN GENERAL
 # ----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Dashboard COVID-19 (Datos Sintéticos)",
-    page_icon="🦠",
+    page_title="Accidentes de Tránsito - Medellín",
+    page_icon="🚦",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-REGIONES = [
-    "Antioquia", "Bogotá D.C.", "Valle del Cauca", "Atlántico", "Santander",
-    "Cundinamarca", "Bolívar", "Nariño", "Córdoba", "Tolima",
-]
-REGION_PESOS = [0.20, 0.22, 0.14, 0.09, 0.08, 0.08, 0.06, 0.05, 0.04, 0.04]
+CODIGO_ACCESO = "4650"
 
+COMUNAS_MEDELLIN = [
+    "Popular", "Santa Cruz", "Manrique", "Aranjuez", "Castilla", "Robledo",
+    "Villa Hermosa", "Buenos Aires", "La Candelaria", "Laureles-Estadio",
+    "La América", "San Javier", "El Poblado", "Guayabal", "Belén",
+]
+PESOS_COMUNAS = [0.09, 0.06, 0.07, 0.06, 0.07, 0.06, 0.06, 0.06, 0.10, 0.08,
+                 0.05, 0.05, 0.09, 0.05, 0.05]
+
+TIPOS_ACCIDENTE = ["Choque", "Atropello", "Volcamiento", "Caída de ocupante", "Incendio"]
+CLASES_VIA = ["Avenida", "Calle", "Carrera", "Autopista", "Glorieta"]
+CONDICIONES_CLIMA = ["Seco", "Lluvia", "Niebla", "Nublado"]
 
 # ----------------------------------------------------------------------------
-# GENERACIÓN DE DATOS SINTÉTICOS (8 columnas, tipos variados)
+# BARRA LATERAL - IDENTIFICACIÓN INSTITUCIONAL
+# ----------------------------------------------------------------------------
+with st.sidebar:
+    st.markdown("## 🎓 EAFIT 2026")
+    st.markdown("**Ciencia de Datos**")
+    st.markdown("Profesor: Jose Padilla")
+    st.markdown("Julio 2026")
+    st.markdown("---")
+
+# ----------------------------------------------------------------------------
+# CONTROL DE ACCESO
+# ----------------------------------------------------------------------------
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
+
+if not st.session_state["autenticado"]:
+    with st.sidebar:
+        codigo_ingresado = st.text_input("🔒 Código de acceso", type="password")
+        if st.button("Ingresar"):
+            if codigo_ingresado == CODIGO_ACCESO:
+                st.session_state["autenticado"] = True
+                st.rerun()
+            else:
+                st.error("Código incorrecto.")
+    st.title("🚦 Dashboard de Accidentes de Tránsito - Medellín")
+    st.info("Ingresa el código de acceso en la barra lateral para operar el dashboard.")
+    st.stop()
+
+# ----------------------------------------------------------------------------
+# GENERACIÓN DE DATOS SINTÉTICOS (10 columnas, incluye serie de tiempo)
 # ----------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def generar_datos(n_registros: int, semilla: int) -> pd.DataFrame:
     rng = np.random.default_rng(semilla)
 
-    # 1) fecha_reporte -> datetime
-    fecha_inicio = datetime(2020, 3, 6)
-    dias_rango = 900
-    offsets = rng.integers(0, dias_rango, n_registros)
-    fecha_reporte = pd.to_datetime([fecha_inicio + timedelta(days=int(d)) for d in offsets])
+    # 1) fecha -> datetime (serie de tiempo, ~2 años)
+    fecha_inicio = datetime(2024, 1, 1)
+    dias_rango = 730
+    offsets = np.sort(rng.integers(0, dias_rango, n_registros))
+    fecha = pd.to_datetime([fecha_inicio + timedelta(days=int(d)) for d in offsets])
 
-    # 2) region -> categórica (str)
-    region = rng.choice(REGIONES, size=n_registros, p=REGION_PESOS)
+    # 2) hora -> int 0-23 (más accidentes en horas pico)
+    horas_pico = np.concatenate([np.arange(6, 9), np.arange(12, 14), np.arange(17, 20)])
+    prob_horas = np.ones(24)
+    prob_horas[horas_pico] = 3.0
+    prob_horas = prob_horas / prob_horas.sum()
+    hora = rng.choice(np.arange(24), size=n_registros, p=prob_horas)
 
-    # 3) edad -> int (distribución gamma truncada, más realista que uniforme)
-    edad = rng.gamma(shape=2.2, scale=17, size=n_registros)
-    edad = np.clip(edad, 0, 95).astype(int)
+    # 3) comuna -> categórica
+    comuna = rng.choice(COMUNAS_MEDELLIN, size=n_registros, p=PESOS_COMUNAS)
 
-    # 4) sexo -> categórica binaria
-    sexo = rng.choice(["Femenino", "Masculino"], size=n_registros, p=[0.51, 0.49])
+    # 4) tipo_accidente -> categórica
+    tipo_accidente = rng.choice(TIPOS_ACCIDENTE, size=n_registros, p=[0.45, 0.20, 0.15, 0.15, 0.05])
 
-    # 5) comorbilidad -> booleano (más probable con edad avanzada)
-    prob_comorb = np.clip(0.10 + (edad / 95) * 0.55, 0.05, 0.85)
-    comorbilidad = rng.random(n_registros) < prob_comorb
+    # 5) clase_via -> categórica
+    clase_via = rng.choice(CLASES_VIA, size=n_registros, p=[0.25, 0.30, 0.25, 0.12, 0.08])
 
-    # 6) dias_sintomas -> int (Poisson)
-    dias_sintomas = rng.poisson(lam=7, size=n_registros)
-    dias_sintomas = np.clip(dias_sintomas, 0, 45)
+    # 6) condicion_climatica -> categórica
+    condicion_climatica = rng.choice(CONDICIONES_CLIMA, size=n_registros, p=[0.55, 0.25, 0.05, 0.15])
 
-    # 7) temperatura_corporal -> float
-    temperatura = rng.normal(loc=37.6 + (dias_sintomas > 10) * 0.4, scale=0.9, size=n_registros)
-    temperatura = np.round(np.clip(temperatura, 35.0, 41.5), 1)
+    # 7) num_vehiculos_involucrados -> int
+    num_vehiculos = rng.poisson(lam=1.6, size=n_registros) + 1
+    num_vehiculos = np.clip(num_vehiculos, 1, 8)
 
-    # 8) estado_paciente -> categórica ordinal, dependiente de edad/comorbilidad
-    riesgo = np.clip(0.02 + (edad / 95) * 0.28 + comorbilidad * 0.12, 0.02, 0.55)
-    estado_paciente = []
-    for r in riesgo:
-        p_fallecido = r * 0.30
-        p_activo = 0.15
-        p_recuperado = 1 - p_fallecido - p_activo
-        estado_paciente.append(
-            rng.choice(["Activo", "Recuperado", "Fallecido"],
-                       p=[p_activo, p_recuperado, p_fallecido])
-        )
+    # 8) velocidad_estimada_kmh -> float (mayor en autopistas/avenidas)
+    base_vel = np.where(np.isin(clase_via, ["Autopista", "Avenida"]), 65, 38)
+    velocidad_estimada = rng.normal(loc=base_vel, scale=12, size=n_registros)
+    velocidad_estimada = np.round(np.clip(velocidad_estimada, 5, 130), 1)
+
+    # 9) num_heridos -> int (más probable con mayor velocidad y clima adverso)
+    factor_clima = np.where(np.isin(condicion_climatica, ["Lluvia", "Niebla"]), 1.4, 1.0)
+    lam_heridos = np.clip((velocidad_estimada / 60) * factor_clima * 0.8, 0.05, 4)
+    num_heridos = rng.poisson(lam=lam_heridos)
+
+    # 10) num_muertos -> int (evento raro, ligado a velocidad alta)
+    prob_muerte = np.clip((velocidad_estimada - 40) / 300, 0.001, 0.12)
+    num_muertos = (rng.random(n_registros) < prob_muerte).astype(int)
 
     df = pd.DataFrame({
-        "fecha_reporte": fecha_reporte,
-        "region": region,
-        "edad": edad,
-        "sexo": sexo,
-        "estado_paciente": estado_paciente,
-        "dias_sintomas": dias_sintomas,
-        "temperatura_corporal": temperatura,
-        "comorbilidad": comorbilidad,
+        "fecha": fecha,
+        "hora": hora,
+        "comuna": comuna,
+        "tipo_accidente": tipo_accidente,
+        "clase_via": clase_via,
+        "condicion_climatica": condicion_climatica,
+        "num_vehiculos_involucrados": num_vehiculos,
+        "velocidad_estimada_kmh": velocidad_estimada,
+        "num_heridos": num_heridos,
+        "num_muertos": num_muertos,
     })
 
-    return df.sort_values("fecha_reporte").reset_index(drop=True)
+    return df.sort_values("fecha").reset_index(drop=True)
 
 
 # ----------------------------------------------------------------------------
@@ -97,9 +140,7 @@ def generar_datos(n_registros: int, semilla: int) -> pd.DataFrame:
 # ----------------------------------------------------------------------------
 st.sidebar.header("⚙️ Generación de datos")
 
-n_registros = st.sidebar.slider(
-    "Número de registros", min_value=2_000, max_value=20_000, value=10_000, step=1_000
-)
+n_registros = st.sidebar.slider("Número de registros", min_value=100, max_value=2_000, value=500, step=50)
 semilla = st.sidebar.number_input("Semilla aleatoria (reproducibilidad)", value=42, step=1)
 
 if st.sidebar.button("🔄 Regenerar datos sintéticos"):
@@ -110,18 +151,14 @@ df = generar_datos(n_registros, int(semilla))
 st.sidebar.markdown("---")
 st.sidebar.header("🔎 Filtros")
 
-fecha_min, fecha_max = df["fecha_reporte"].min(), df["fecha_reporte"].max()
+fecha_min, fecha_max = df["fecha"].min(), df["fecha"].max()
 rango_fechas = st.sidebar.date_input(
     "Rango de fechas", value=(fecha_min, fecha_max), min_value=fecha_min, max_value=fecha_max
 )
-regiones_sel = st.sidebar.multiselect("Región", options=REGIONES, default=REGIONES)
-sexo_sel = st.sidebar.multiselect("Sexo", options=df["sexo"].unique().tolist(),
-                                   default=df["sexo"].unique().tolist())
-estado_sel = st.sidebar.multiselect("Estado del paciente",
-                                     options=df["estado_paciente"].unique().tolist(),
-                                     default=df["estado_paciente"].unique().tolist())
-comorb_sel = st.sidebar.multiselect("Comorbilidad", options=[True, False], default=[True, False],
-                                     format_func=lambda x: "Sí" if x else "No")
+comunas_sel = st.sidebar.multiselect("Comuna", options=COMUNAS_MEDELLIN, default=COMUNAS_MEDELLIN)
+tipo_sel = st.sidebar.multiselect("Tipo de accidente", options=TIPOS_ACCIDENTE, default=TIPOS_ACCIDENTE)
+clima_sel = st.sidebar.multiselect("Condición climática", options=CONDICIONES_CLIMA, default=CONDICIONES_CLIMA)
+via_sel = st.sidebar.multiselect("Clase de vía", options=CLASES_VIA, default=CLASES_VIA)
 
 if isinstance(rango_fechas, tuple) and len(rango_fechas) == 2:
     f_ini, f_fin = pd.to_datetime(rango_fechas[0]), pd.to_datetime(rango_fechas[1])
@@ -129,33 +166,37 @@ else:
     f_ini, f_fin = fecha_min, fecha_max
 
 df_f = df[
-    (df["fecha_reporte"] >= f_ini) & (df["fecha_reporte"] <= f_fin) &
-    (df["region"].isin(regiones_sel)) &
-    (df["sexo"].isin(sexo_sel)) &
-    (df["estado_paciente"].isin(estado_sel)) &
-    (df["comorbilidad"].isin(comorb_sel))
+    (df["fecha"] >= f_ini) & (df["fecha"] <= f_fin) &
+    (df["comuna"].isin(comunas_sel)) &
+    (df["tipo_accidente"].isin(tipo_sel)) &
+    (df["condicion_climatica"].isin(clima_sel)) &
+    (df["clase_via"].isin(via_sel))
 ].copy()
 
 st.sidebar.markdown(f"**Registros filtrados:** {len(df_f):,} / {len(df):,}")
+st.sidebar.markdown("---")
+if st.sidebar.button("🔓 Cerrar sesión"):
+    st.session_state["autenticado"] = False
+    st.rerun()
 
-COLS_NUM = ["edad", "dias_sintomas", "temperatura_corporal"]
-COLS_CAT = ["region", "sexo", "estado_paciente", "comorbilidad"]
+COLS_NUM = ["hora", "num_vehiculos_involucrados", "velocidad_estimada_kmh", "num_heridos", "num_muertos"]
+COLS_CAT = ["comuna", "tipo_accidente", "clase_via", "condicion_climatica"]
 
 # ----------------------------------------------------------------------------
 # ENCABEZADO
 # ----------------------------------------------------------------------------
-st.title("🦠 Dashboard COVID-19 — Datos Sintéticos")
+st.title("🚦 Dashboard de Accidentes de Tránsito — Medellín (Datos Sintéticos)")
 st.caption(
     "Todos los datos se generan de forma sintética dentro de la aplicación con fines "
-    "demostrativos; no representan casos reales."
+    "académicos y demostrativos; no representan accidentes reales."
 )
 
 if df_f.empty:
     st.warning("No hay registros con los filtros actuales. Ajusta los filtros en la barra lateral.")
     st.stop()
 
-tab_resumen, tab_cuant, tab_cual, tab_viz = st.tabs(
-    ["📋 Resumen", "📈 Estadísticas Cuantitativas", "🗂️ Estadísticas Cualitativas", "🎛️ Visualización Dinámica"]
+tab_resumen, tab_cuant, tab_cual, tab_series, tab_viz = st.tabs(
+    ["📋 Resumen", "📈 Cuantitativas", "🗂️ Cualitativas", "📅 Serie de Tiempo", "🎛️ Visualización Dinámica"]
 )
 
 # ----------------------------------------------------------------------------
@@ -163,14 +204,12 @@ tab_resumen, tab_cuant, tab_cual, tab_viz = st.tabs(
 # ----------------------------------------------------------------------------
 with tab_resumen:
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Total registros", f"{len(df_f):,}")
-    c2.metric("Edad promedio", f"{df_f['edad'].mean():.1f} años")
-    tasa_fallec = (df_f["estado_paciente"] == "Fallecido").mean() * 100
-    c3.metric("Tasa de fallecidos", f"{tasa_fallec:.1f}%")
-    tasa_recup = (df_f["estado_paciente"] == "Recuperado").mean() * 100
-    c4.metric("Tasa de recuperados", f"{tasa_recup:.1f}%")
-    tasa_comorb = df_f["comorbilidad"].mean() * 100
-    c5.metric("Con comorbilidad", f"{tasa_comorb:.1f}%")
+    c1.metric("Total accidentes", f"{len(df_f):,}")
+    c2.metric("Heridos totales", f"{int(df_f['num_heridos'].sum()):,}")
+    c3.metric("Muertos totales", f"{int(df_f['num_muertos'].sum()):,}")
+    c4.metric("Velocidad promedio", f"{df_f['velocidad_estimada_kmh'].mean():.1f} km/h")
+    tasa_letal = (df_f["num_muertos"] > 0).mean() * 100
+    c5.metric("Accidentes con muertos", f"{tasa_letal:.1f}%")
 
     st.markdown("#### Vista previa de los datos")
     st.dataframe(df_f.head(50), use_container_width=True)
@@ -196,14 +235,14 @@ with tab_cuant:
     col_a, col_b = st.columns(2)
 
     with col_a:
-        n_bins = st.slider("Número de bins", 5, 100, 30, key="bins_dist")
-        fig_hist = px.histogram(df_f, x=var_num, nbins=n_bins, color="estado_paciente",
+        n_bins = st.slider("Número de bins", 5, 60, 20, key="bins_dist")
+        fig_hist = px.histogram(df_f, x=var_num, nbins=n_bins, color="tipo_accidente",
                                  title=f"Histograma de {var_num}", opacity=0.75)
         st.plotly_chart(fig_hist, use_container_width=True)
 
     with col_b:
-        fig_box = px.box(df_f, y=var_num, x="sexo", color="sexo", points="outliers",
-                          title=f"Boxplot de {var_num} por sexo")
+        fig_box = px.box(df_f, y=var_num, x="clase_via", color="clase_via", points="outliers",
+                          title=f"Boxplot de {var_num} por clase de vía")
         st.plotly_chart(fig_box, use_container_width=True)
 
     st.markdown("### Matriz de correlación (variables numéricas)")
@@ -243,7 +282,7 @@ with tab_cual:
     with col_c:
         var_cat_1 = st.selectbox("Variable 1", COLS_CAT, index=0, key="cross1")
     with col_d:
-        var_cat_2 = st.selectbox("Variable 2", COLS_CAT, index=2, key="cross2")
+        var_cat_2 = st.selectbox("Variable 2", COLS_CAT, index=1, key="cross2")
 
     if var_cat_1 != var_cat_2:
         tabla_cruzada = pd.crosstab(df_f[var_cat_1], df_f[var_cat_2])
@@ -254,7 +293,69 @@ with tab_cual:
         st.info("Elige dos variables distintas para la tabla cruzada.")
 
 # ----------------------------------------------------------------------------
-# TAB 4: VISUALIZACIÓN DINÁMICA E INTERACTIVA
+# TAB 4: SERIE DE TIEMPO
+# ----------------------------------------------------------------------------
+with tab_series:
+    st.markdown("### Evolución temporal de los accidentes")
+
+    col_s1, col_s2, col_s3 = st.columns(3)
+    with col_s1:
+        frecuencia = st.selectbox("Frecuencia de agregación", ["Diaria", "Semanal", "Mensual"], index=2)
+    with col_s2:
+        metrica_serie = st.selectbox(
+            "Métrica a graficar",
+            ["Número de accidentes", "Heridos", "Muertos", "Velocidad promedio"],
+        )
+    with col_s3:
+        ventana_media_movil = st.slider("Ventana media móvil (periodos)", 0, 12, 3)
+
+    freq_map = {"Diaria": "D", "Semanal": "W", "Mensual": "M"}
+    df_serie = df_f.set_index("fecha").sort_index()
+
+    if metrica_serie == "Número de accidentes":
+        serie = df_serie.resample(freq_map[frecuencia]).size().rename("valor")
+    elif metrica_serie == "Heridos":
+        serie = df_serie["num_heridos"].resample(freq_map[frecuencia]).sum().rename("valor")
+    elif metrica_serie == "Muertos":
+        serie = df_serie["num_muertos"].resample(freq_map[frecuencia]).sum().rename("valor")
+    else:
+        serie = df_serie["velocidad_estimada_kmh"].resample(freq_map[frecuencia]).mean().rename("valor")
+
+    serie_df = serie.reset_index()
+
+    fig_serie = go.Figure()
+    fig_serie.add_trace(go.Scatter(x=serie_df["fecha"], y=serie_df["valor"], mode="lines+markers",
+                                    name=metrica_serie, line=dict(color="#E45756")))
+
+    if ventana_media_movil > 0:
+        media_movil = serie_df["valor"].rolling(window=ventana_media_movil).mean()
+        fig_serie.add_trace(go.Scatter(x=serie_df["fecha"], y=media_movil, mode="lines",
+                                        name=f"Media móvil ({ventana_media_movil})",
+                                        line=dict(color="#4C78A8", dash="dash")))
+
+    activar_umbral_serie = st.checkbox("Activar umbral de referencia en la serie")
+    if activar_umbral_serie and not serie_df["valor"].empty:
+        min_v, max_v = float(serie_df["valor"].min()), float(serie_df["valor"].max())
+        umbral_serie = st.slider("Valor del umbral", min_v, max_v, (min_v + max_v) / 2)
+        fig_serie.add_hline(y=umbral_serie, line_dash="dot", line_color="green",
+                            annotation_text=f"Umbral: {umbral_serie:.2f}")
+        periodos_sobre = (serie_df["valor"] > umbral_serie).sum()
+        st.caption(f"Periodos por encima del umbral: **{periodos_sobre}** de {len(serie_df)}")
+
+    fig_serie.update_layout(title=f"{metrica_serie} — Agregación {frecuencia.lower()}",
+                            xaxis_title="Fecha", yaxis_title=metrica_serie,
+                            template="plotly_white", height=550)
+    st.plotly_chart(fig_serie, use_container_width=True)
+
+    st.markdown("#### Accidentes por hora del día")
+    conteo_hora = df_f["hora"].value_counts().sort_index().reset_index()
+    conteo_hora.columns = ["hora", "conteo"]
+    fig_hora = px.bar(conteo_hora, x="hora", y="conteo", title="Distribución de accidentes por hora del día",
+                       color="conteo", color_continuous_scale="Reds")
+    st.plotly_chart(fig_hora, use_container_width=True)
+
+# ----------------------------------------------------------------------------
+# TAB 5: VISUALIZACIÓN DINÁMICA E INTERACTIVA
 # ----------------------------------------------------------------------------
 with tab_viz:
     st.markdown("### Constructor de gráficas dinámico")
@@ -268,21 +369,17 @@ with tab_viz:
             ["Dispersión (scatter)", "Línea", "Barras", "Boxplot", "Violín", "Histograma"],
         )
     with col2:
-        eje_x = st.selectbox("Variable eje X", todas_cols, index=todas_cols.index("fecha_reporte"))
+        eje_x = st.selectbox("Variable eje X", todas_cols, index=todas_cols.index("fecha"))
     with col3:
         eje_y_opciones = ["(ninguna)"] + todas_cols
-        eje_y = st.selectbox("Variable eje Y", eje_y_opciones,
-                              index=eje_y_opciones.index("temperatura_corporal")
-                              if "temperatura_corporal" in eje_y_opciones else 0)
+        idx_y = eje_y_opciones.index("velocidad_estimada_kmh") if "velocidad_estimada_kmh" in eje_y_opciones else 0
+        eje_y = st.selectbox("Variable eje Y", eje_y_opciones, index=idx_y)
 
     col4, col5, col6 = st.columns(3)
     with col4:
         color_por = st.selectbox("Colorear por", ["(ninguna)"] + COLS_CAT)
     with col5:
-        paleta = st.selectbox(
-            "Paleta de colores",
-            ["Plotly", "Vivid", "Bold", "Pastel", "Set2", "D3"],
-        )
+        paleta = st.selectbox("Paleta de colores", ["Plotly", "Vivid", "Bold", "Pastel", "Set2", "D3"])
     with col6:
         opacidad = st.slider("Opacidad", 0.1, 1.0, 0.8)
 
@@ -353,5 +450,5 @@ with tab_viz:
     st.markdown("---")
     st.markdown("#### Descargar datos filtrados")
     csv = df_f.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Descargar CSV filtrado", data=csv, file_name="covid_datos_sinteticos_filtrados.csv",
+    st.download_button("⬇️ Descargar CSV filtrado", data=csv, file_name="accidentes_medellin_sinteticos.csv",
                        mime="text/csv")
