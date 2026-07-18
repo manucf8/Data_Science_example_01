@@ -309,7 +309,7 @@ with tab_series:
     with col_s3:
         ventana_media_movil = st.slider("Ventana media móvil (periodos)", 0, 12, 3)
 
-    freq_map = {"Diaria": "D", "Semanal": "W", "Mensual": "M"}
+    freq_map = {"Diaria": "D", "Semanal": "W", "Mensual": "ME"}
     df_serie = df_f.set_index("fecha").sort_index()
 
     if metrica_serie == "Número de accidentes":
